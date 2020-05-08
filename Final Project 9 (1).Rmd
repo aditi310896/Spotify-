@@ -1,0 +1,876 @@
+---
+title: "Final Project"
+output: word_document
+---
+
+Team:
+Chuck Yang (yy2999)
+Yutong Wang (yw3488)
+Yi Ren (yr2363)
+Aditi Khandelwal (ak4426)
+Wensi Wang (ww2547)
+
+# 1.Load libraries
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+silentLoad <- function (x) {
+  if (suppressMessages(!require(x, character.only = TRUE))) {
+    install.packages(x, character.only = TRUE)
+    if (suppressMessages(!require(x, character.only = TRUE))) stop("Failed to load/install", x)
+  }
+}
+
+
+silentLoad("randomForest")
+silentLoad("pROC")
+silentLoad("gbm")
+silentLoad("e1071")
+silentLoad("tree")
+silentLoad("ggplot2")
+silentLoad("GGally")
+silentLoad("evd") # loads the library and suppresses unnecessary output.
+silentLoad("ggthemes")
+silentLoad("scales")
+silentLoad("MASS")
+silentLoad("numDeriv")
+silentLoad("stargazer")
+silentLoad("tidyverse")
+silentLoad("caret")
+silentLoad("devtools")
+silentLoad("keras")
+silentLoad("tensorflow")
+silentLoad("corrplot")
+
+```
+
+
+# 2.Data preparation for visualization
+
+## Read the Spotify data
+```{r}
+data <- read.csv('spotify.csv')
+data[,1:9] <- scale(data[,1:9]) # normalize numerical attributes of songs
+summary(data)
+```
+
+## Segment Spotify data
+```{r}
+#segment the data into 3 groups: early skipping/ late skipping/ no skipping
+data$skiptime <- 'Early skipping'
+data$skiptime[(!data$early)&data$late] <- 'Late skipping'
+data$skiptime[(!data$late)] <- 'No skipping'
+
+data$skiptime <- factor(data$skiptime,levels=c('No skipping','Late skipping','Early skipping'),ordered=TRUE)
+
+table(data$skiptime)
+```
+
+
+```{r}
+#Percentage that each group takes up in the whole dataset
+t <- table(data$skiptime)
+prop.noskipping = t[1]/sum(t[1]+t[2]+t[3]) #0.29585 -- no skipping takes up 29.58% of the whole datapoints
+prop.lateskipping = t[2]/sum(t[1]+t[2]+t[3]) #0.17525 -- late skipping takes up 17.53% of the whole datapoints
+prop.earlyskipping =t[3]/sum(t[1]+t[2]+t[3]) #0.5289 -- early skipping takes up 52.89% of the whole datapoints
+```
+
+# 3.Visualization
+
+We would like to do a explortary analysis on the dataset before we actually build any models. The goal of visualization here is to see if there is any perceiveable pattern hidden in `skiptime` sub-groups.
+
+## 3.1 Preview
+### 3.1.1 Histogram
+```{r}
+#Subset by skip time
+early <-filter(data, skiptime == "Early skipping")
+late <-filter(data, skiptime == "Late skipping")
+no <-filter(data, skiptime == "No skipping")
+```
+
+```{r}
+#histogram by groups
+g1 <- ggplot(early, aes(duration)) + geom_histogram(aes(duration), binwidth = 1, fill = "grey", color = "black") +
+    ggtitle("Duration in Early Skipping")
+g1
+```
+
+```{r}
+g2 <- ggplot(late, aes(duration)) + geom_histogram(aes(duration), binwidth = 1, fill = "grey", color = "black") + 
+    ggtitle("Duration in Late Skipping")
+g2 
+```
+
+```{r}
+g3 <- ggplot(no, aes(duration)) + geom_histogram(aes(duration), binwidth = 1, fill = "grey", color = "black") + 
+    ggtitle("Duration in No Skipping")
+g3 
+```
+
+Distribution of duration is similar when plotted separately based on skip time. However, the frequency of each group is different. Therefore, we would like to create density plot for each feature separated by three groups: early skipping, late skipping, and no skipping to better visualize the difference between different skipping patterns. 
+
+### 3.1.2 Correlation
+```{r}
+#Correlation graph of features
+data.corr <- cor(as.matrix(data[, 1:9]))
+corrplot(data.corr)
+```
+
+Interpretation of correlation graph: Energy and Loudness have strong positive relationship with each other. Energy and Acousticness have relatively strong negative relationship with each other. Loudness and Acousticness have relatively strong negative relationship with each other, but it is not as significant as the correlationship between energy and acousticness
+
+## 3.2 Two level
+To begin with, we started with only `skip` and `no skip`:
+
+```{r}
+data$NOSKIPPING = as.factor(ifelse((!data$late),TRUE, FALSE))
+nrow(data[which(data$NOSKIPPING == "TRUE"),])
+#Create a new column that differentiate the data with the criteria of Skip / no skip.
+```
+
+### 3.2.1 Density Curve
+```{r}
+g1 <- ggplot(data, aes(duration)) + geom_density(aes(duration, colour = NOSKIPPING))+
+    ggtitle("Density: Duration")
+g1 
+```
+Duration: Most of the users' ratings on duration fall in the range of -2 to 2 after data scaling.There is no significant difference between the distribution pattern of SKIP user segment and the UNSKIP user segment.
+
+```{r}
+g2 <- ggplot(data, aes(acousticness)) + geom_density(aes(acousticness, colour = NOSKIPPING))+
+    ggtitle("Density: Acousticness")
+g2
+```
+Acounticness:Majority of the users' ratings on acounticness fall in the range of -1 to -0.5 after data scaling.There are more SKIP group of the users tend to rate in that range than the UNSKIP group,which implies that for those who skip the music , acounticness of the music greatly affect their choices. 
+```{r}
+g3 <- ggplot(data, aes(danceability)) + geom_density(aes(danceability, colour = NOSKIPPING))+
+    ggtitle("Density: Danceability")
+g3
+```
+Danceability: Majority of the users' ratings on danceability fall in the range of 0 to 1 after data scaling.There are more UNSKIP group of the users tend to rate in that range than the SKIP group,which implies that for those who do not skip the music , danceability of the music greatly affect their choices. 
+```{r}
+g4 <- ggplot(data, aes(energy)) + geom_density(aes(energy, colour = NOSKIPPING))+
+    ggtitle("Density: Energy")
+g4
+```
+Energy: Majority of the users' ratings on energy fall in the range of -1 to 0 after data scaling.There are more SKIP group of the users tend to rate in that range than the UNSKIP group ,which implies that for those who skip the music , energy of the music greatly affect their choices. 
+```{r}
+g5 <- ggplot(data, aes(instrumentalness)) + geom_density(aes(instrumentalness, colour = NOSKIPPING))+
+    ggtitle("Density: Instrumentalness")
+g5
+```
+Instrumentalness: Majority of the users' ratings on instrumentalness concentrated around 0 after data scaling.There are more SKIP group of the users tend to rate in that range than the UNSKIP group,which implies that for those who skip the music , instrumentalness of the music greatly affect their choices. 
+```{r}
+g6 <- ggplot(data, aes(liveness)) + geom_density(aes(liveness, colour = NOSKIPPING))+
+    ggtitle("Density: Liveness")
+g6
+```
+Liveness:Majority of the users' ratings on energy fall in the range of -1 to 0 after data scaling.There is no significant difference between the distribution pattern of SKIP user segment and the UNSKIP user segment.
+```{r}
+g7 <- ggplot(data, aes(loudness)) + geom_density(aes(loudness, colour = NOSKIPPING)) +
+    ggtitle("Density: Loudness")
+g7
+```
+Loudness: Majority of the users' ratings on energy fall in the range of -2.5 to 2.5 after data scaling.There are slightly more user who skip at the rating of around 0-1 the UNSKIP user segment, which implies that for those who skip the music , loudness of the music greatly affect their choices. 
+```{r}
+g8 <- ggplot(data, aes(tempo)) + geom_density(aes(tempo, colour = NOSKIPPING))+
+    ggtitle("Density: Tempo")
+g8
+```
+Tempo:Majority of the users' ratings on energy fall in the range of -2 to 2 after data scaling.There is no significant difference between the distribution pattern of SKIP user segment and the UNSKIP user segment.
+```{r}
+g9 <- ggplot(data, aes(valence)) + geom_density(aes(valence, colour = NOSKIPPING))+
+    ggtitle("Density: Valence")
+g9
+```
+Valence:Majority of the users' ratings on energy fall in the range of -2 to 2 after data scaling.More skip user tend to rate lower in valence, and more no skipping user tend to rate higher in valence. Therefore, valence is more important for noskipping users.
+
+### 3.2.2 Boxplot 
+
+```{r}
+#Boxplot with means accorss all features
+par(mfrow=c(3,3))
+ggplot(data=data, aes(x= NOSKIPPING, y =duration)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("duration across skipping pattern")
+```
+
+```{r}
+ggplot(data=data, aes(x= NOSKIPPING, y =acousticness)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("acousticness across skipping pattern")
+```
+
+```{r}
+ggplot(data=data, aes(x= NOSKIPPING, y =danceability)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("danceability across skipping pattern")
+```
+
+```{r}
+ggplot(data=data, aes(x= NOSKIPPING, y =energy)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("energy across skipping pattern")
+```
+
+```{r}
+ggplot(data=data, aes(x= NOSKIPPING, y =instrumentalness)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("instrumentalness across skipping pattern")
+```
+
+```{r}
+ggplot(data=data, aes(x= NOSKIPPING, y =liveness)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("liveness across skipping pattern")
+```
+
+```{r}
+ggplot(data=data, aes(x= NOSKIPPING, y =loudness)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("loudness across skipping pattern")
+```
+
+```{r}
+ggplot(data=data, aes(x= NOSKIPPING, y =tempo)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("tempo across skipping pattern")
+```
+
+```{r}
+ggplot(data=data, aes(x= NOSKIPPING, y =valence)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("valence across skipping pattern")
+```
+
+The boxplots give us similar distribution of data points. However, boxplot is not as intuitive as the density since the group difference for some features are minimal. Therefore, we will stick to the analysis of density plots.
+
+##3.3 Three level
+
+After conducting the first explortary analysis on two `skiptime` sub-groups, we now wonder if the same analysis will have different result when spliting the data into  `no skip`, `early skip`and `late skip`. 
+
+
+### 3.3.1 Density curve of three types of skipping patterns
+```{r}
+den1 <- ggplot(data=data, aes(duration)) + geom_density(aes(duration, colour = skiptime)) + ggtitle("Density: Duration")
+den1
+```
+
+The density plot of feature `duration` shows that there are little difference between the three skipping patterns across all values. Therefore, we think duration of the song does not have conclusive influence on when to skip a song amongst the users we surveyed.
+
+```{r}
+den2 <- ggplot(data=data, aes(acousticness)) + geom_density(aes(acousticness, colour = skiptime)) + ggtitle("Density: Acousticness")
+den2
+```
+
+The density plot of feature `acousticness` shows that there are noticable difference between the three skipping patterns around value -1 to -0.5. Particularly, the density of "early skipping" peaks in this range, which implies that for those who skip the music early, acousticness (around value -1 to -0.5) of the music greatly affect their choices. 
+
+```{r}
+den3 <- ggplot(data=data, aes(danceability)) + geom_density(aes(danceability, colour = skiptime)) + ggtitle("Density: Danceability")
+den3
+```
+
+The density plot of feature `danceability` shows that there are noticable difference between the three skipping patterns around value 0 to 0.5. Particularly, the density of "no skipping" peaks in this range, which implies that for those who don't skip the music, danceability (around value 0 to 0.5) of the music greatly affect their choices. 
+
+```{r}
+den4 <- ggplot(data=data, aes(energy)) + geom_density(aes(energy, colour = skiptime)) + ggtitle("Density: Energy")
+den4
+```
+
+The density plot of feature `energy` shows that there are noticable difference between the three skipping patterns around value -0.5 to 1, which implies that music that has energy value around -0.5 to 1 might affect people's decisions on whether or not to skip the music or when to skip the music. 
+
+```{r}
+den5 <- ggplot(data=data, aes(instrumentalness)) + geom_density(aes(instrumentalness, colour = skiptime)) + ggtitle("Density: Instrumentalness")
+den5
+```
+From the density plot we can see that there is no drastic difference amongst three patterns.
+
+```{r}
+den6 <- ggplot(data=data, aes(liveness)) + geom_density(aes(liveness, colour = skiptime)) + ggtitle("Density: Liveness")
+den6
+```
+
+The density plot of feature `liveness` shows that there are noticable difference between the three skipping patterns around value -0.6 to 0.3. Particularly, the density of "early skipping" and "no skipping" peaks in this range, which implies that for those who skip the music early or don't skip the music, liveness (around value -0.6 to 0.3) of the music greatly affect their choices. 
+
+```{r}
+den7 <- ggplot(data=data, aes(loudness)) + geom_density(aes(loudness, colour = skiptime)) + ggtitle("Density: Loudness")
+den7
+```
+
+The density plot of feature `loudness` shows that there are noticable difference between the three skipping patterns around value 0 to 0.3. Particularly, the density of "early skipping" and "late skipping" peaks in this range, which implies that for those who skip the music early or skip the music late, loudness (around value 0 to 0.3) of the music greatly affect their choices. 
+
+```{r}
+den8 <- ggplot(data=data, aes(tempo)) + geom_density(aes(tempo, colour = skiptime)) + ggtitle("Density: Tempo")
+den8
+```
+
+The density plot of feature "tempo" shows that there are noticable difference between the three skipping patterns around value 0 to 0.7. Particularly, the density of "early skipping" and "late skipping" peaks in this range, which implies that for those who skip the music early or skip the music late, tempo (around value 0 to 0.7) of the music greatly affect their choices. Also, there are noticable difference between the three skipping patterns around value -1 to -0.5. Particularly, the density of "late skipping" peaks in this range, which implies that for those who skip the music early or skip the music late, tempo (around value -1 to -0.5) of the music greatly affect their choices.
+
+```{r}
+den9 <- ggplot(data=data, aes(valence)) + geom_density(aes(valence, colour = skiptime)) + ggtitle("Density: Valence")
+den9
+```
+
+The density plot of feature "valence" shows that there are noticable difference pretty much throughout the entire range, particularly between -1.5 to 1.5, which implies that valence (around value -1.5 to 1.5) of the music greatly affect their choices. 
+
+### 3.3.2 Boxplot
+```{r}
+#Boxplot with means accorss all features
+par(mfrow=c(3,3))
+
+#facet_warp
+
+ggplot(data=data, aes(x= skiptime, y =duration)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("duration across skipping pattern") 
+```
+
+```{r}
+ggplot(data=data, aes(x= skiptime, y =acousticness)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("acousticness across skipping pattern")
+```
+
+```{r}
+ggplot(data=data, aes(x= skiptime, y =danceability)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("danceability across skipping pattern")
+```
+
+```{r}
+ggplot(data=data, aes(x= skiptime, y =energy)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("energy across skipping pattern")
+```
+
+```{r}
+ggplot(data=data, aes(x= skiptime, y =instrumentalness)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("instrumentalness across skipping pattern")
+```
+
+```{r}
+ggplot(data=data, aes(x= skiptime, y =liveness)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("liveness across skipping pattern")
+```
+
+```{r}
+ggplot(data=data, aes(x= skiptime, y =loudness)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("loudness across skipping pattern")
+```
+
+```{r}
+ggplot(data=data, aes(x= skiptime, y =tempo)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("tempo across skipping pattern")
+```
+
+```{r}
+ggplot(data=data, aes(x= skiptime, y =valence)) + geom_boxplot() + stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE)+ stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, 
+               vjust=-0.7, aes( label=round(..y.., digits=1)))+ggtitle("valence across skipping pattern")
+```
+
+The boxplots give us similar distribution of data points. However, boxplot is not as intuitive as the density since the group difference for some features are minimal. Therefore, we will stick to the analysis of density plots.
+
+## 3.4 Summary - Visualization
+
+Based on our findings, features, such as `duration` and `instrumentalness`, show nearly no effects on consumers' skipping behavior. However, the noticeable differences presented in previous graphs motivate us to investigate and understand how each feature influence the skipping. Boxplots also cannot tell us the difference among `skiptime` sub-groups. For the next step, we want to build predictive models that will well classify user skipping based on the dataset.
+
+
+# 4.Data preparation for model
+
+## Read the Spotify data
+```{r}
+# we re-import the data to make sure the data used to fit the models are clean and correct
+df <- read.csv("spotify.csv")
+```
+```{r}
+df$early <- ifelse(df$early,1,0)
+df$late <- ifelse(df$late,1,0)
+
+early_skip <- df[,-11]
+late_skip <- df[which(df$early==0),-10]
+```
+
+## Segment Spotify data
+```{r}
+# early skip data
+set.seed(1)
+early_sample <- sample(1:nrow(early_skip),0.75*nrow(early_skip))
+early_train <- early_skip[early_sample,]
+early_test <- early_skip[-early_sample,]
+
+# late skip data
+set.seed(2)
+late_sample <- sample(1:nrow(late_skip),0.75*nrow(late_skip))
+late_train <- late_skip[late_sample,]
+late_test <- late_skip[-late_sample,]
+
+# status data
+set.seed(3)
+status <- df
+status$status <- ifelse((df$early | df$late),1,0)
+status$late <- NULL
+status$early <- NULL
+status_train <- status[c(1:15000),]
+status_test <- status[c(15001:nrow(status)),]
+```
+
+## Scale Spotify data
+```{r}
+# scale the data.
+# In practice, test data are unobservable. So, I use mean and standard deviation of training data to scale test data
+x <- c(1:(length(df)-2))
+
+# early skip data scale
+early_train_x <- scale(early_train[,x])
+col_means_early <- sapply(early_train[,x],mean)
+col_stddevs_early <- sapply(early_train[,x],sd)
+early_test_x <- scale(early_test[,x], center = col_means_early, scale = col_stddevs_early)
+early_train_scale <- as.data.frame(cbind(early_train_x,early_train[,-x]))
+early_test_scale <- as.data.frame(cbind(early_test_x,early_test[,-x]))
+colnames(early_train_scale)[10] <- "early"
+colnames(early_test_scale)[10] <- "early"
+
+# late skip data scale
+late_train_x <- scale(late_train[,x])
+col_means_late <- sapply(late_train[,x],mean)
+col_stddevs_late <- sapply(late_train[,x],sd)
+late_test_x <- scale(late_test[,x], center = col_means_late, scale = col_stddevs_late)
+late_train_scale <- as.data.frame(cbind(late_train_x,late_train[,-x]))
+late_test_scale <- as.data.frame(cbind(late_test_x,late_test[,-x]))
+colnames(late_train_scale)[10] <- "late"
+colnames(late_test_scale)[10] <- "late"
+
+# status data scale
+status_train_x <- scale(status_train[,x])
+col_means_status <- sapply(status_train[,x],mean)
+col_stddevs_status <- sapply(status_train[,x],sd)
+status_test_x <- scale(status_test[,x], center = col_means_status, scale = col_stddevs_status)
+status_train_scale <- as.data.frame(cbind(status_train_x,status_train[,-x]))
+status_test_scale <- as.data.frame(cbind(status_test_x,status_test[,-x]))
+colnames(status_train_scale)[10] <- "status"
+colnames(status_test_scale)[10] <- "status"
+```
+
+
+# 5.Model
+We fit the Spotify data with logistic regression, random forests, boosted classification tree, support vector machine, and convolution neural network. We used these models because these are good classifiers. Especally the boosted tree and convolution neural network. If we tune these two models' parameters carefully, these models will have better performance compared to other models. After fitting the data, we plot ROC curve for each model to see which one perform better
+
+##5.1 Logistic regression
+
+### 5.1.1 Predict early skipping
+```{r}
+# fit the model
+model_glm_early <- glm(early~.,data = early_train,family = binomial)
+
+# prediction
+pred_glm_early <- predict(model_glm_early, early_test, type="response")
+
+# auc
+roc_glm_early <- roc(response = early_test$early, predictor = pred_glm_early, na.rm=TRUE)
+print(roc_glm_early)
+```
+
+### 5.1.2 Predict late skipping
+```{r}
+# fit the model
+model_glm_late <- glm(late~.,data = late_train,family = binomial)
+
+# prediction
+pred_glm_late<- predict(model_glm_late, late_test, type="response")
+
+# auc
+roc_glm_late <- roc(response = late_test$late, predictor = pred_glm_late, na.rm=TRUE)
+print(roc_glm_late)
+```
+
+### 5.1.3 Predict status/skip or not
+```{r}
+# fit the model
+model_glm_status <- glm(status~.,data = status_train,family = binomial)
+
+# prediction
+pred_glm_status<- predict(model_glm_status, status_test, type="response")
+
+# auc
+roc_glm_status <- roc(response = status_test$status, predictor = pred_glm_status, na.rm=TRUE)
+print(roc_glm_status)
+```
+
+##5.2 Random forest
+
+### 5.2.1 Predict early skipping
+```{r}
+# train the model
+model_rf_early <- randomForest(as.factor(early)~.,data=early_train,importance = TRUE)
+
+# prediction
+pred_rf_early <- predict(model_rf_early, newdata=early_test, type="prob")
+
+# auc
+roc_rf_early <- roc(response = early_test$early, predictor = pred_rf_early[,2], na.rm=TRUE)
+print(roc_rf_early)
+```
+
+### 5.2.2 Predict late skipping
+```{r}
+# train the model
+model_rf_late <- randomForest(as.factor(late)~.,data=late_train,importance = TRUE)
+
+# prediction
+pred_rf_late <- predict(model_rf_late, newdata=late_test, type="prob")
+
+# auc
+roc_rf_late <- roc(response = late_test$late, predictor = pred_rf_late[,2], na.rm=TRUE)
+print(roc_rf_late)
+```
+
+### 5.2.3 Predict status/skip or not
+```{r}
+# train the model
+model_rf_status <- randomForest(as.factor(status)~.,data=status_train,importance = TRUE)
+
+# prediction
+pred_rf_status <- predict(model_rf_status, newdata=status_test, type="prob")
+
+# auc
+roc_rf_status <- roc(response = status_test$status, predictor = pred_rf_status[,2], na.rm=TRUE)
+print(roc_rf_status)
+```
+
+##5.3 Boosted classification tree
+
+### 5.3.1 Predict early skipping
+```{r}
+# fit the model
+model_bo_early <- gbm(as.character(early) ~., data = early_train_scale, distribution = 'bernoulli', 
+                      n.trees = 5000, interaction.depth = 2, shrinkage = 0.01, verbose = F, cv.folds = 10)
+opt <- which(model_bo_early$cv.error == min(model_bo_early$cv.error))
+# prediction
+pred_bo_early <- predict(model_bo_early, newdata = early_test_scale, n.trees=opt, type='response')
+
+# auc
+roc_bo_early <- roc(response = early_test_scale$early, predictor = pred_bo_early, na.rm=TRUE)
+print(roc_bo_early)
+```
+
+### 5.3.2 Predict late skipping
+```{r}
+# fit the model
+model_bo_late <- gbm(as.character(late) ~., data = late_train_scale, distribution = 'bernoulli', 
+                      n.trees = 5000, interaction.depth = 2, shrinkage = 0.01, verbose = F, cv.folds = 10)
+opt <- which(model_bo_late$cv.error == min(model_bo_late$cv.error))
+
+# prediction
+pred_bo_late <- predict(model_bo_late, newdata = late_test_scale, n.trees=opt, type='response')
+
+# auc
+roc_bo_late <- roc(response = late_test_scale$late, predictor = pred_bo_late, na.rm=TRUE)
+print(roc_bo_late)
+```
+
+### 5.3.3 Predict status/skip or not
+```{r}
+# fit the model
+model_bo_status <- gbm(as.character(status) ~., data = status_train_scale, distribution = 'bernoulli', 
+                      n.trees = 5000, interaction.depth = 2, shrinkage = 0.01, verbose = F, cv.folds = 10)
+opt <- which(model_bo_status$cv.error == min(model_bo_status$cv.error))
+
+# prediction
+pred_bo_status <- predict(model_bo_status, newdata = status_test_scale, n.trees=opt, type='response')
+
+# auc
+roc_bo_status <- roc(response = status_test_scale$status, predictor = pred_bo_status, na.rm=TRUE)
+print(roc_bo_status)
+```
+
+##5.4 Support vector machine
+
+### 5.4.1 Predict early skipping
+```{r}
+# fit the model
+model_svm_early <- svm(as.factor(early) ~., data = early_train_scale, 
+                       kernel = "radial", gamma=1, cost=1, decision.values=T)
+
+# prediction
+pred_svm_early <- attributes(predict(model_svm_early, newdata = early_test_scale, decision.values=T))$decision.values
+
+# auc
+roc_svm_early <- roc(response = early_test_scale$early, predictor = pred_svm_early, na.rm=TRUE)
+print(roc_svm_early)
+```
+
+### 5.4.2 Predict late skipping
+```{r}
+# fit the model
+model_svm_late <- svm(as.factor(late) ~., data = late_train_scale, 
+                       kernel = "radial", gamma=1,cost=1,decision.values=T)
+
+# prediction
+pred_svm_late <- attributes(predict(model_svm_late, newdata = late_test_scale, decision.values=T))$decision.values
+
+# auc
+roc_svm_late <- roc(response = late_test_scale$late, predictor = pred_svm_late, na.rm=TRUE)
+print(roc_svm_late)
+```
+
+### 5.4.3 Predict status/skip or not
+```{r}
+# fit the model
+model_svm_status <- svm(as.factor(status) ~., data = status_train_scale, 
+                       kernel = "radial", gamma=1,cost=1,decision.values=T)
+
+# prediction
+pred_svm_status <- attributes(predict(model_svm_status, newdata = status_test_scale, 
+                                      decision.values=T))$decision.values
+
+# auc
+roc_svm_status <- roc(response = status_test_scale$status, predictor = pred_svm_status, na.rm=TRUE)
+print(roc_svm_status)
+```
+
+##5.5 Convnet
+
+### 5.5.1 Predict early skipping
+```{r}
+x_train <- as.matrix(early_train_scale[,1:9])
+y_train <- early_train_scale[,10]
+
+
+x_test <- as.matrix(early_test_scale[,1:9])
+y_test <- early_test_scale[,10]
+
+
+build_model <- function(dropout = 0) {
+  model <- keras::keras_model_sequential()
+  model %>%
+    layer_dense(units = 15, activation = "relu") %>%
+    layer_dropout(dropout) %>%
+    layer_dense(units = 1, activation = "sigmoid")
+  model %>% compile(
+    loss = "binary_crossentropy",
+    optimizer = "adam",
+    metrics = list("accuracy")
+  )
+  model
+}
+
+model <- build_model()
+
+epochs <- 10
+
+print_dot_callback <- callback_lambda(
+  on_epoch_end = function(epoch, logs) {
+    if (epoch %% 80 == 0) cat("nn")
+    cat(".")
+  }
+)
+
+
+
+# fit the model and store training stats
+fitted_model_hp <- model %>% fit(x = x_train,
+                                 y = y_train,
+                                 epochs = epochs,
+                                 verbose = 0,
+                                 callbacks = list(print_dot_callback)
+)
+
+plot(fitted_model_hp, metrics = "accuracy", smooth = FALSE) +
+  coord_cartesian(ylim = c(0, 1))
+```
+```{r}
+network<-keras_model_sequential()%>%layer_dense(units = 100, activation = "relu") %>%
+  layer_dense(units = 100, activation = "relu") %>%
+  layer_dense(units = 1,activation = "sigmoid")
+
+network %>% compile(
+  loss = 'binary_crossentropy',
+  optimizer = optimizer_adadelta(),
+  metrics = c('accuracy')
+)
+
+# fit the model
+fitted_model_sp <- network %>%fit(x_train, y_train, epochs=2, validation_split = 0.1)
+```
+```{r}
+# prediction
+predict_cnn_early <- network %>% predict_proba(x_test)
+
+# auc
+roc_cnn_early <- roc(response = y_test, predictor = predict_cnn_early, na.rm=TRUE)
+print(roc_cnn_early)
+```
+
+### 5.5.2 Predict late skipping
+```{r}
+x_train <- as.matrix(late_train_scale[,1:9])
+y_train <- late_train_scale[,10]
+x_test <- as.matrix(late_test_scale[,1:9])
+y_test <- late_test_scale[,10]
+
+build_model <- function(dropout = 0) {
+  model <- keras::keras_model_sequential()
+  model %>%
+    layer_dense(units = 15, activation = "relu") %>%
+    layer_dropout(dropout) %>%
+    layer_dense(units = 1, activation = "sigmoid")
+  model %>% compile(
+    loss = 'binary_crossentropy',
+    optimizer = optimizer_adadelta(),
+    metrics = list('accuracy')
+  )
+  model
+}
+
+model <- build_model()
+#model %>% summary()
+
+epochs <- 100
+
+print_dot_callback <- callback_lambda(
+  on_epoch_end = function(epoch, logs) {
+    if (epoch %% 80 == 0) cat("nn")
+    cat(".")
+  }
+)
+
+# Fit the model and store training stats
+fitted_model_hp <- model %>% fit(x = x_train,
+                                 y = y_train,
+                                 epochs = epochs,
+                                 verbose = 0,
+                                 callbacks = list(print_dot_callback)
+)
+
+plot(fitted_model_hp, metrics = "accuracy", smooth = FALSE) +
+  coord_cartesian(ylim = c(0, 1))
+```
+```{r}
+network<-keras_model_sequential()%>%layer_dense(units = 100, activation = "relu") %>%
+  layer_dense(units = 100, activation = "relu") %>%
+  layer_dense(units = 1)
+
+network %>% compile(
+  loss = 'binary_crossentropy',
+  optimizer = optimizer_adadelta(),
+  metrics = c('accuracy')
+)
+
+# fit the model
+fitted_model_sp <- network %>%fit(x_train, y_train, epochs=10, validation_split = 0.1)
+```
+```{r}
+# prediction
+predict_cnn_late <- network %>% predict_proba(x_test)
+
+# auc
+roc_cnn_late <- roc(response = y_test, predictor = predict_cnn_late, na.rm=TRUE)
+print(roc_cnn_late)
+```
+
+### 5.5.3 Predict status/skip or not
+```{r}
+x_train <- as.matrix(status_train_scale[,1:9])
+y_train <- status_train_scale[,10]
+x_test <- as.matrix(status_test_scale[,1:9])
+y_test <- status_test_scale[,10]
+
+build_model <- function(dropout = 0) {
+  model <- keras::keras_model_sequential()
+  model %>%
+    layer_dense(units = 15, activation = "relu") %>%
+    layer_dropout(dropout) %>%
+    layer_dense(units = 1, activation = "sigmoid")
+  model %>% compile(
+    loss = 'binary_crossentropy',
+    optimizer = optimizer_adadelta(),
+    metrics = list('accuracy')
+  )
+  model
+}
+
+model <- build_model()
+#model %>% summary()
+
+epochs <- 100
+
+print_dot_callback <- callback_lambda(
+  on_epoch_end = function(epoch, logs) {
+    if (epoch %% 80 == 0) cat("nn")
+    cat(".")
+  }
+)
+
+# Fit the model and store training stats
+fitted_model_hp <- model %>% fit(x = x_train,
+                                 y = y_train,
+                                 epochs = epochs,
+                                 verbose = 0,
+                                 callbacks = list(print_dot_callback)
+)
+
+plot(fitted_model_hp, metrics = "accuracy", smooth = FALSE) +
+  coord_cartesian(ylim = c(0, 1))
+```
+```{r}
+network<-keras_model_sequential()%>%layer_dense(units = 100, activation = "relu") %>%
+  layer_dense(units = 100, activation = "relu") %>%
+  layer_dense(units = 1)
+
+network %>% compile(
+  loss = 'binary_crossentropy',
+  optimizer = optimizer_adadelta(),
+  metrics = c('accuracy')
+)
+
+# fit the model
+fitted_model_sp <- network %>%fit(x_train, y_train, epochs=5, validation_split = 0.1)
+```
+```{r}
+# prediction
+predict_cnn_status <- network %>% predict_proba(x_test)
+
+# auc
+roc_cnn_status <- roc(response = y_test, predictor = predict_cnn_status, na.rm=TRUE)
+print(roc_cnn_status)
+```
+
+##5.6 ROC curves
+
+### 5.6.1 Early skipping
+```{r}
+# roc curves plot for early skipping
+plot(roc_rf_early, col="darkslategray",
+     main = "ROC of Early Skipping Prediction")
+plot(roc_bo_early, add = TRUE, col="goldenrod3")
+plot(roc_svm_early, add = TRUE, col="lightpink3")
+plot(roc_glm_early, add = TRUE, col="lightblue4")
+plot(roc_cnn_early, add = TRUE, col="plum4")
+legend("bottomright", legend=c("random forest", "boosted classification tree", 
+                               "support vactor machine", "logistic regression","convnet"),
+       col=c("darkslategray", "goldenrod3", "lightpink3", "lightblue4","plum4"), lty=1, cex=0.8)
+```
+
+### 5.6.2 Late skipping
+```{r}
+# roc curves plot for late skipping
+plot(roc_rf_late, col="darkslategray",
+     main = "ROC of Late Skipping Prediction")
+plot(roc_bo_late, add = TRUE, col="goldenrod3")
+plot(roc_svm_late, add = TRUE, col="lightpink3")
+plot(roc_glm_late, add = TRUE, col="lightblue4")
+plot(roc_cnn_late, add = TRUE, col="plum4")
+legend("bottomright", legend=c("random forest", "boosted classification tree", 
+                               "support vactor machine", "logistic regression","cnn"),
+       col=c("darkslategray", "goldenrod3", "lightpink3", "lightblue4","plum4"), lty=1, cex=0.8)
+```
+
+### 5.6.3 Skipping status
+```{r}
+# roc curves plot for skipping status
+plot(roc_rf_early, col="darkslategray",
+     main = "ROC of Skipping Status Prediction")
+plot(roc_bo_status, add = TRUE, col="goldenrod3")
+plot(roc_svm_status, add = TRUE, col="lightpink3")
+plot(roc_glm_status, add = TRUE, col="lightblue4")
+plot(roc_cnn_status, add = TRUE, col="plum4")
+legend("bottomright", legend=c("random forest", "boosted classification tree", 
+                               "support vactor machine", "logistic regression","convnet"),
+       col=c("darkslategray", "goldenrod3", "lightpink3", "lightblue4","plum4"), lty=1, cex=0.8)
+```
+
+##5.7 Summary - Model
+From the roc curves, it is clear that all these models don't perform well. This result is obvious and reasonable. In the visualization part, we've seen almost identical shapes when comparing no skipping, early skipping, and late skipping. Thus, our models can't differentiate user's behaviours well. This indicates that the acoustic features might not be good predictors for a song being skipped or not. However, this indication is counter-intuitive since acoustic features do affect listener's behaviour. We think there must be something wrong with the data set. Some important prediction signals are not covered in the spotify data set.
+
+
+#6. Discussion and furture scope
+Spotify has a lot of user segmentations (i.e. some people like Jazz, some don't). Thus, different user segmentations may prefer different type of songs. Users in one segmentation may be likely to skip songs that are preferred by people in other segmentations. But in the current data set, the users are not seperated/segmented. So, all type of songs will show the same skip/not skip pattern.
+
+In summary, the bad model performance is the results of lacking user segmentation. If we had more user level data and the pattern of their listening behaviour, these models will show a better performance. Thus, we suggest spotify to segment its users, and collect skipping/no skipping data separately. Then, the models will learn user's behaviour better. Hence, Spotify will have a good understanding of user's preference in each segmentation, and reduce user-skipping by recommending songs that are prefered by users in each segmentation.
+
+
